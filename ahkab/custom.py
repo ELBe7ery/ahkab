@@ -1,7 +1,7 @@
 # -*- coding: iso-8859-1 -*-
-# diode.py
-# Diode model
-# Copyright 2006-2013 Giuseppe Venturini
+# custom.py
+# custom model
+# Copyright 2015 Giuseppe Venturini
 
 # This file is part of the ahkab simulator.
 #
@@ -18,16 +18,22 @@
 # along with ahkab.  If not, see <http://www.gnu.org/licenses/>.
 
 """
-This module contains a diode element and its model class.
+This module contains a custom element and its model class.
 
-.. image:: images/elem/diode.svg
+.. image:: images/elem/custom.svg
 
 """
 
 #
-#         |\|
-#  n1 o---| ]---o n2
-#         |/|
+#             +---+
+#      n1 o---|   |---o n2
+#             | G |
+#      n3 o---|   |---o n4
+#          .  |   |  .
+#          .  |   |  .
+#          .  |   |  .
+#  n(N-1) o---|   |---o nN
+#             +---+
 #
 
 from __future__ import (unicode_literals, absolute_import,
@@ -35,7 +41,6 @@ from __future__ import (unicode_literals, absolute_import,
 
 import numpy as np
 
-from scipy.optimize import newton
 
 from . import constants
 from . import utilities
@@ -43,39 +48,28 @@ from . import options
 
 damping_factor = 4.
 
-class diode(object):
-    """A diode element.
+class custom(devices.Component):
+    """A custom element.
 
     **Parameters:**
 
     n1, n2 : string
-        The diode anode and cathode.
+        The custom anode and cathode.
     model : model instance
-        The diode model providing the mathemathical modeling.
+        The custom model providing the mathemathical modeling.
     ic : float
-        The diode initial voltage condition for transient analysis
+        The custom initial voltage condition for transient analysis
         (ie :math:`V_D = V(n_1) - V(n_2)` at :math:`t = 0`).
     off : bool
-         Whether the diode should be initially assumed to be off when
+         Whether the custom should be initially assumed to be off when
          computing an OP.
 
     The other are the physical parameters reported in the following table:
 
-    +---------------+-------------------+-----------------------------------+
-    | *Parameter*   | *Default value*   | *Description*                     |
-    +===============+===================+===================================+
-    | AREA          | 1.0               | Area multiplier                   |
-    +---------------+-------------------+-----------------------------------+
-    | T             | circuit temp      | Operating temperature             |
-    +---------------+-------------------+-----------------------------------+
-
     """
 
-    def __init__(self, part_id, n1, n2, model, AREA=None, T=None, ic=None, off=False):
-        self.part_id = part_id
-        self.is_nonlinear = True
-        self.is_symbolic = True
-        self.dc_guess = [0.425]
+    def __init__(self, part_id, nodes, model, **parameters):
+        super(ChildB, self).__init__(**parameters)
         class _dev_class(object):
             pass
         self.device = _dev_class()
@@ -88,19 +82,6 @@ class diode(object):
         self.model = model
         if self.device.T is None:
             self.device.T = constants.T
-
-        if ic is not None:  # fixme
-            print("(W): ic support in diodes is very experimental.")
-            self.dc_guess = ic
-        self.ic = ic
-        self.off = off
-        if self.off:
-            if self.ic is None:
-                self.ic = 0
-            else:
-                print("(W): IC statement in diodes takes precedence over OFF.")
-                print("(W): If you are performing a transient simulation with uic=2,")
-                print("(W): you may want to check the initial value.")
 
     def _get_T(self):
         return self.device.T
@@ -127,7 +108,7 @@ class diode(object):
 
     def get_drive_ports(self, op):
         if not op == 0:
-            raise ValueError('Diode %s has no output port %d' %
+            raise ValueError('custom %s has no output port %d' %
                              (self.part_id, op))
         return self.ports
 
@@ -160,9 +141,6 @@ class diode(object):
         v = ports_v[0]
         i = self.model.get_i(self.model, v, self.device)
         return i
-
-    def i_symb(self):
-        return "I_s * (exp(_v_/0.0258) -1)"
 
     def gstamp(self, ports_v, time=0, reduced=True):
         """Returns the differential (trans)conductance wrt the port specified by port_index
@@ -202,7 +180,7 @@ class diode(object):
 
     def g(self, op_index, ports_v, port_index, time=0):
         if not port_index == 0:
-            raise Exception("Attepted to evaluate a diode's gm on an unknown port.")
+            raise Exception("Attepted to evaluate a custom's gm on an unknown port.")
         gm = self.model.get_gm(self.model, op_index, utilities.tuplinator(ports_v), port_index, self.device)
         return gm
 
@@ -213,7 +191,7 @@ class diode(object):
 
         ports_v : list of lists
             The parameter is to be set to ``[[v]]``, where ``v`` is the voltage
-            applied to the diode terminals.
+            applied to the custom terminals.
 
         **Returns:**
 
@@ -223,11 +201,11 @@ class diode(object):
             The values corresponding to ``op_keys``.
         """
         vn1n2 = float(ports_v_v[0][0])
-        idiode = self.i(0, (vn1n2,))
-        gmdiode = self.g(0, (vn1n2,), 0)
+        icustom = self.i(0, (vn1n2,))
+        gmcustom = self.g(0, (vn1n2,), 0)
         op_keys = ["Part ID", "V(n1-n2) [V]", "I(n1-n2) [A]", "P [W]",
                 "gm [A/V]", u"T [\u00b0K]"]
-        op_info = [self.part_id.upper(), vn1n2, idiode, vn1n2*idiode, gmdiode,
+        op_info = [self.part_id.upper(), vn1n2, icustom, vn1n2*icustom, gmcustom,
                    self._get_T()]
         return op_keys, op_info
 
@@ -274,9 +252,9 @@ TM2_DEFAULT = 0.0
 T_DEFAULT = utilities.Celsius2Kelvin(26.85)
 AREA_DEFAULT = 1.0
 
-class diode_model(object):
-    """A diode model implementing the `Shockley diode equation
-    <http://en.wikipedia.org/wiki/Shockley_diode_equation#Shockley_diode_equation>`__.
+class custom_model(object):
+    """A custom model implementing the `Shockley custom equation
+    <http://en.wikipedia.org/wiki/Shockley_custom_equation#Shockley_custom_equation>`__.
 
     Currently the capacitance modeling part is missing.
 
@@ -296,8 +274,8 @@ class diode_model(object):
     | RS            | 0.0 ohm           | Series resistance per unit area   |
     +---------------+-------------------+-----------------------------------+
 
-    please refer to a textbook description of the Shockley diode equation
-    or to the source file ``diode.py`` file for the other parameters.
+    please refer to a textbook description of the Shockley custom equation
+    or to the source file ``custom.py`` file for the other parameters.
 
     """
     def __init__(self, name, IS=None, N=None, ISR=None, NR=None, RS=None,
@@ -337,7 +315,7 @@ class diode_model(object):
         self.VT = constants.Vth(self.T)
 
     def print_model(self):
-        strm = ".model diode %s IS=%g N=%g ISR=%g NR=%g RS=%g CJ0=%g M=%g " + \
+        strm = ".model custom %s IS=%g N=%g ISR=%g NR=%g RS=%g CJ0=%g M=%g " + \
                "VJ=%g FC=%g CP=%g TT=%g BV=%g IBV=%g KF=%g AF=%g FFE=%g " + \
                "TEMP=%g XTI=%g EG=%g TBV=%g TRS=%g TTT1=%g TTT2=%g TM1=%g " + \
                "TM2=%g"

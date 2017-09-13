@@ -48,7 +48,7 @@ import numpy.linalg
 import scipy.sparse
 import scipy.sparse.linalg
 
-from . import components
+from . import devices
 from . import diode
 from . import constants
 from . import ticker
@@ -126,7 +126,7 @@ specs = {'op': {
 
 
 def dc_solve(mna, Ndc, circ, Ntran=None, Gmin=None, x0=None, time=None,
-             MAXIT=None, locked_nodes=None, skip_Tt=False, verbose=3):
+             MAXIT=None, locked_nodes=None, skip_Tt=False, verbose=3, abdo_eqn_show = 1):
     """Low-level method to perform a DC solution of the circuit
 
     .. note::
@@ -223,10 +223,10 @@ def dc_solve(mna, Ndc, circ, Ntran=None, Gmin=None, x0=None, time=None,
     v_eq = 0
     if not skip_Tt:
         for elem in circ:
-            if (isinstance(elem, components.sources.VSource) or isinstance(elem, components.sources.ISource)) and elem.is_timedependent:
-                if isinstance(elem, components.sources.VSource):
+            if (isinstance(elem, devices.VSource) or isinstance(elem, devices.ISource)) and elem.is_timedependent:
+                if isinstance(elem, devices.VSource):
                     Tt[nv - 1 + v_eq, 0] = -1 * elem.V(time)
-                elif isinstance(elem, components.sources.ISource):
+                elif isinstance(elem, devices.ISource):
                     if elem.n1:
                         Tt[elem.n1 - 1, 0] = Tt[elem.n1 - 1, 0] + elem.I(time)
                     if elem.n2:
@@ -255,6 +255,7 @@ def dc_solve(mna, Ndc, circ, Ntran=None, Gmin=None, x0=None, time=None,
     convergence_by_node = None
     printing.print_info_line(("Solving... ", 3), verbose, print_nl=False)
 
+    
     while(not converged):
         if standard_solving["enabled"]:
             mna_to_pass = mna + Gmin
@@ -274,7 +275,8 @@ def dc_solve(mna, Ndc, circ, Ntran=None, Gmin=None, x0=None, time=None,
             N_to_pass = source_stepping["factors"][source_stepping["index"]]*Ndc + Ntran*(Ntran is not None)
         try:
             (x, error, converged, n_iter, convergence_by_node) = mdn_solver(x, mna_to_pass, circ, T=N_to_pass,
-                                                                            nv=nv, print_steps=(verbose > 0), locked_nodes=locked_nodes, time=time, MAXIT=MAXIT, debug=(verbose == 6))
+                                                                            nv=nv, print_steps=(verbose > 0), locked_nodes=locked_nodes, time=time, MAXIT=MAXIT, debug=(verbose == 6), show_eqn = abdo_eqn_show)
+            
             tot_iterations += n_iter
         except np.linalg.linalg.LinAlgError:
             n_iter = 0
@@ -286,7 +288,8 @@ def dc_solve(mna, Ndc, circ, Ntran=None, Gmin=None, x0=None, time=None,
             converged = False
             print("failed.")
             printing.print_general_error("Overflow")
-
+        
+        abdo_eqn_show = 1
         if not converged:
             if verbose == 6 and convergence_by_node is not None:
                 for ivalue in range(len(convergence_by_node)):
@@ -529,17 +532,17 @@ def dc_analysis(circ, start, stop, step, source, sweep_type='LINEAR', guess=True
     for index in range(len(circ)):
         if circ[index].part_id.lower() == elem_descr:
             if elem_type == 'v':
-                if isinstance(circ[index], components.sources.VSource):
+                if isinstance(circ[index], devices.VSource):
                     source_elem = circ[index]
                     break
             if elem_type == 'i':
-                if isinstance(circ[index], components.sources.ISource):
+                if isinstance(circ[index], devices.ISource):
                     source_elem = circ[index]
                     break
     if not source_elem:
         raise ValueError(".DC: source %s was not found." % source)
 
-    if isinstance(source_elem, components.sources.VSource):
+    if isinstance(source_elem, devices.VSource):
         initial_value = source_elem.dc_value
     else:
         initial_value = source_elem.dc_value
@@ -562,7 +565,7 @@ def dc_analysis(circ, start, stop, step, source, sweep_type='LINEAR', guess=True
     index = 0
     for sweep_value in dc_iter:
         index = index + 1
-        if isinstance(source_elem, components.sources.VSource):
+        if isinstance(source_elem, devices.VSource):
             source_elem.dc_value = sweep_value
         else:
             source_elem.dc_value = sweep_value
@@ -587,7 +590,7 @@ def dc_analysis(circ, start, stop, step, source, sweep_type='LINEAR', guess=True
         printing.print_info_line(("done", 3), verbose)
 
     # clean up
-    if isinstance(source_elem, components.sources.VSource):
+    if isinstance(source_elem, devices.VSource):
         source_elem.dc_value = initial_value
     else:
         source_elem.dc_value = initial_value
@@ -642,7 +645,7 @@ def op_analysis(circ, x0=None, guess=True, outfile=None, verbose=3):
     Gmin_matrix = build_gmin_matrix(
         circ, options.gmin, mna.shape[0], verbose - 2)
     (x1, error1, solved1, n_iter1) = dc_solve(mna, N,
-                                              circ, Gmin=Gmin_matrix, x0=x0, verbose=verbose)
+                                              circ, Gmin=Gmin_matrix, x0=x0, verbose=verbose, abdo_eqn_show = 0)
 
     # We'll check the results now. Recalculate them without Gmin (using previsious solution as initial guess)
     # and check that differences on nodes and current do not exceed the
@@ -689,7 +692,7 @@ def op_analysis(circ, x0=None, guess=True, outfile=None, verbose=3):
 
 def mdn_solver(x, mna, circ, T, MAXIT, nv, locked_nodes, time=None,
                print_steps=False, vector_norm=lambda v: max(abs(v)),
-               debug=True):
+               debug=True, show_eqn = 1):
     """
     Solves a problem like F(x) = 0 using the Newton Algorithm with a variable
     damping.
@@ -801,6 +804,13 @@ def mdn_solver(x, mna, circ, T, MAXIT, nv, locked_nodes, time=None,
     else:
         J = np.zeros((mna_size, mna_size))
     Tx = np.zeros((mna_size, 1))
+    
+    #Symbolic matrix, of size 100 chars each to hold symbolic relation
+    Tx_sym = np.chararray((mna_size, 1), 500000)
+
+    for i in range(len(Tx_sym)):
+        Tx_sym[i] = "0"
+
     converged = False
     iteration = 0
     while iteration < MAXIT:  # newton iteration counter
@@ -812,7 +822,9 @@ def mdn_solver(x, mna, circ, T, MAXIT, nv, locked_nodes, time=None,
             Tx[:, 0] = 0.0
             for elem in circ:
                 if elem.is_nonlinear:
-                    _update_J_and_Tx(J, Tx, x, elem, time)
+                    _update_J_and_Tx(J, Tx, x, elem, time, Tx_sym, circ)
+        if(show_eqn==0 and iteration ==1):
+            print_sym_eqn(mna, T, Tx_sym)
         residuo = mna.dot(x) + T + nonlinear_circuit*Tx
 
         if sparse:
@@ -840,25 +852,76 @@ def mdn_solver(x, mna, circ, T, MAXIT, nv, locked_nodes, time=None,
     return (x, residuo, converged, iteration, convergence_by_node)
 
 
-def _update_J_and_Tx(J, Tx, x, elem, time):
+def _replace_voltage(eqn, v):
+    ret = eqn.replace('_v_' , '('+v+')')
+    return ret
+
+def print_sym_eqn(mna, T, Tx_sym):
+    print ("The circuit Equation should be\n")
+    #if(type(mna)==scipy.sparse.coo.coo_matrix):
+    #    mna = mna.tocsr()
+    for i in range(mna.shape[0]):
+        row_res = "0 "
+        t_sym_val = "0"
+        for j in range(mna.shape[0]):
+            mna_el = 0
+            if(type(mna)==scipy.sparse.coo.coo_matrix):
+                mna_el = mna[i,j]
+            else:
+                mna_el = mna[i][j]
+            if(mna_el != 0):
+                row_res += ' + ' + str(mna_el) + ' * v('+str(j+1)+') '
+
+
+        #if(mna[i][j] !=0): 
+        t_sym_val =  str(Tx_sym[i])[1:-1][1:-1]
+        t_sym_val = t_sym_val.replace("'",'').replace('"','')
+        print ('F('+str(i+1)+') = ' + row_res + ' + '+ str(T[i])[1:-1] + " + "+ t_sym_val + ';\n')
+
+def _update_J_and_Tx(J, Tx, x, elem, time, Tx_sym = None, ckt = None):
     out_ports = elem.get_output_ports()
     for index in range(len(out_ports)):
         n1, n2 = out_ports[index]
         n1m1, n2m1 = n1 - 1, n2 - 1
         dports = elem.get_drive_ports(index)
         v_dports = []
+        v_sym = ""
         for port in dports:
             v = 0.  # build v: remember we removed the 0 row and 0 col of mna -> -1
             if port[0]:
                 v = v + x[port[0] - 1, 0]
+                if(v_sym == ""):
+                    if(port[0] !=0):
+                        v_sym = 'v('+str(port[0])+')'
+                else:
+                    if(port[0] !=0):
+                        v_sym += '+ v('+str(port[0])+')'
             if port[1]:
                 v = v - x[port[1] - 1, 0]
+                if(port[1] !=0):
+                    v_sym += '- v('+str(port[1])+')'
+
             v_dports.append(v)
         if hasattr(elem, 'gstamp') and hasattr(elem, 'istamp'):
             iis, gs = elem.gstamp(v_dports, time)
             J[iis] += gs.reshape(-1)
             iis, i = elem.istamp(v_dports, time)
+            
+            i_symb = ""
+            try:
+                i_symb = elem.i_symb()
+                i_symb = _replace_voltage(i_symb, v_sym)
+            except:
+                None
+
             Tx[iis] += i.reshape(-1)
+
+
+
+            Tx_sym[iis[0][0]] = " " + str(Tx_sym[iis[0][0]])[1:-1][1:-1] + " + " + str(i_symb)
+            if(len(iis[0])>1):
+                Tx_sym[iis[0][1]] = " " + str(Tx_sym[iis[0][1]])[1:-1][1:-1] + " - " + str(i_symb)
+
             continue
         if n1 or n2:
             iel = elem.i(index, v_dports, time)
@@ -989,31 +1052,31 @@ def generate_mna_and_N(circ, verbose=3):
     for elem in circ:
         if elem.is_nonlinear:
             continue
-        elif isinstance(elem, components.Resistor):
+        elif isinstance(elem, devices.Resistor):
             mna[elem.n1, elem.n1] = mna[elem.n1, elem.n1] + elem.g
             mna[elem.n1, elem.n2] = mna[elem.n1, elem.n2] - elem.g
             mna[elem.n2, elem.n1] = mna[elem.n2, elem.n1] - elem.g
             mna[elem.n2, elem.n2] = mna[elem.n2, elem.n2] + elem.g
-        elif isinstance(elem, components.Capacitor):
+        elif isinstance(elem, devices.Capacitor):
             pass  # In a capacitor I(V) = 0
-        elif isinstance(elem, components.sources.GISource):
+        elif isinstance(elem, devices.GISource):
             mna[elem.n1, elem.sn1] = mna[elem.n1, elem.sn1] + elem.alpha
             mna[elem.n1, elem.sn2] = mna[elem.n1, elem.sn2] - elem.alpha
             mna[elem.n2, elem.sn1] = mna[elem.n2, elem.sn1] - elem.alpha
             mna[elem.n2, elem.sn2] = mna[elem.n2, elem.sn2] + elem.alpha
-        elif isinstance(elem, components.sources.ISource):
+        elif isinstance(elem, devices.ISource):
             if not elem.is_timedependent:  # convenzione normale!
                 N[elem.n1, 0] = N[elem.n1, 0] + elem.I()
                 N[elem.n2, 0] = N[elem.n2, 0] - elem.I()
             else:
                 pass  # vengono aggiunti volta per volta
-        elif isinstance(elem, components.InductorCoupling):
+        elif isinstance(elem, devices.InductorCoupling):
             pass
             # this is taken care of within the inductors
         elif circuit.is_elem_voltage_defined(elem):
             pass
             # we'll add its lines afterwards
-        elif isinstance(elem, components.sources.FISource):
+        elif isinstance(elem, devices.FISource):
             # we add these last, they depend on voltage sources
             # to sense the current
             pass
@@ -1034,19 +1097,19 @@ def generate_mna_and_N(circ, verbose=3):
             # KVL
             mna[index, elem.n1] = +1.0
             mna[index, elem.n2] = -1.0
-            if isinstance(elem, components.sources.VSource) and not elem.is_timedependent:
+            if isinstance(elem, devices.VSource) and not elem.is_timedependent:
                 # corretto, se e' def una parte tempo-variabile ci pensa
                 # mdn_solver a scegliere quella giusta da usare.
                 N[index, 0] = -1.0 * elem.V()
-            elif isinstance(elem, components.sources.VSource) and elem.is_timedependent:
+            elif isinstance(elem, devices.VSource) and elem.is_timedependent:
                 pass  # taken care step by step
-            elif isinstance(elem, components.sources.EVSource):
+            elif isinstance(elem, devices.EVSource):
                 mna[index, elem.sn1] = -1.0 * elem.alpha
                 mna[index, elem.sn2] = +1.0 * elem.alpha
-            elif isinstance(elem, components.Inductor):
+            elif isinstance(elem, devices.Inductor):
                 # N[index,0] = 0 pass, it's already zero
                 pass
-            elif isinstance(elem, components.sources.HVSource):
+            elif isinstance(elem, devices.HVSource):
                 index_source = circ.find_vde_index(elem.source_id)
                 mna[index, n_of_nodes+index_source] = 1.0 * elem.alpha
             else:
@@ -1056,7 +1119,7 @@ def generate_mna_and_N(circ, verbose=3):
 
     # iterate again for devices that depend on voltage-defined ones.
     for elem in circ:
-        if isinstance(elem, components.sources.FISource):
+        if isinstance(elem, devices.FISource):
             local_i_index = circ.find_vde_index(elem.source_id, verbose=0)
             mna[elem.n1, n_of_nodes + local_i_index] = mna[elem.n1, n_of_nodes + local_i_index] + elem.alpha
             mna[elem.n2, n_of_nodes + local_i_index] = mna[elem.n2, n_of_nodes + local_i_index] - elem.alpha
@@ -1170,13 +1233,13 @@ def modify_x0_for_ic(circ, x0):
 
     # setup voltages this may _not_ work properly
     for elem in circ:
-        if isinstance(elem, components.Capacitor) and elem.ic or \
+        if isinstance(elem, devices.Capacitor) and elem.ic or \
                 isinstance(elem, diode.diode) and elem.ic:
             x0[elem.n1 - 1, 0] = x0[elem.n2 - 1, 0] + elem.ic
 
     # setup the currents
     for elem in voltage_defined_elements:
-        if isinstance(elem, components.Inductor) and elem.ic:
+        if isinstance(elem, devices.Inductor) and elem.ic:
             x0[nv - 1 + voltage_defined_elements.index(elem), 0] = elem.ic
 
     if return_obj:
@@ -1188,5 +1251,3 @@ def modify_x0_for_ic(circ, x0):
         xnew = x0
 
     return xnew
-
-

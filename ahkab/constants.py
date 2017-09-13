@@ -52,9 +52,23 @@ def Vth(T=Tref):
     """
     return k * T / e
 
-class Material:
+
+class silicon:
+    """Silicon class
+
+    Access this class as ``constants.si``.
+
+    **Attributes**
+
+    **esi**: permittivity of silicon.
+
+    **eox**: permittivity of silicon dioxide.
+
+    """
     def __init__(self):
-        pass;
+        self.esi = 104.5 * 10 ** -12  # F/m
+        self.eox = 34.5 * 10 ** -12  # F/m
+
     def Eg(self, T=Tref):
         """Energy gap of silicon at temperature ``T``
 
@@ -70,10 +84,10 @@ class Material:
             The energy gap, expressed in electron-volt (eV).
         """
 
-        return (self.Eg_0 - self.alpha * T ** 2 / (self.beta + T))  # eV
-    
+        return (1.16 - 0.000702 * T ** 2 / (1108 + T))  # eV
+
     def ni(self, T=Tref):
-        """Intrinsic semiconductor carrier concentration at temperature ``T``
+        """Intrinsic Silicon carrier concentration at temperature ``T``
 
         **Parameters:**
 
@@ -84,29 +98,10 @@ class Material:
         **Returns:**
 
         ni : float
-            The intrinsic carrier concentration.
+            The intrinsec carrier concentration.
         """
-        return self.n_i_0 * (T / Tref)**(3/2) * math.exp(self.Eg(Tref) / (2 * Vth(Tref)) - self.Eg(T) / (2 * Vth(T)))
 
-class silicon(Material):
-    """Silicon class
-
-    Access this class as ``constants.si``.
-
-    **Attributes**
-
-    **esi**: permittivity of silicon.
-
-    **eox**: permittivity of silicon dioxide.
-
-    """
-    def __init__(self):
-        self.esi = 104.5 * 10 ** -12  # F/m
-        self.eox = 34.5 * 10 ** -12  # F/m
-        self.Eg_0=1.16
-        self.alpha=0.000702
-        self.beta=1108
-        self.n_i_0=1.45 * 10 ** 16
+        return 1.45 * 10 ** 16 * (T / Tref) * math.exp(self.Eg(Tref) / (2 * Vth(Tref)) - self.Eg(T) / (2 * Vth(T)))
 
 #: Silicon class instantiated.
 si = silicon()
